@@ -1,0 +1,354 @@
+%% LyX 2.0.8.1 created this file.  For more info, see http://www.lyx.org/.
+%% Do not edit unless you really know what you are doing.
+\documentclass[english]{article}
+\usepackage[latin9]{inputenc}
+\usepackage{listings}
+\usepackage{babel}
+\begin{document}
+
+\title{OpenCL in R by example}
+
+
+\author{Marek Kudla}
+
+
+\date{12/04/15}
+
+\maketitle
+
+\section*{Introduction}
+
+For laymen: OpenCL is a High-Throughput Computing language that enables
+use of computation accelerators, like GPUs, multicore CPUs or specialized
+cards. R is a statistical programming language that provides many
+built-in and verified statistical functions as well as rich plotting
+capabilities, yet until recently was single-threaded, so ill-suited
+for running computer-intensive simulations. With the advent of OpenCL
+it is now possible to bring supercomputer-scale simulations to inexpensive
+workstations. Setting the OpenCL in R has many advantages. You can
+use computing power of OpenCL for number crunching, while still process
+input and output with high-level R functions. Typical example would
+be generating random numbers in R using its various distribution functions,
+run intensive calculations on them using OpenCL, then use R to plot
+the results. Such set-up makes it possible for you to skip solving
+non-essential programming problems in C or C++ and focus on writing
+computational code.
+
+
+\section*{Using Multiple Cores of Modern Microprocessors in R}
+
+Generally R code runs on a single core. It does not automatically
+use all available cores. However it is possible to convince it if
+you explicitely ask for it nicely. If your input is a list of mutually
+independent values then you can divide this list and run multiple
+copies of your function, each utilising free core. This is available
+through 'parallel' package that is now built-in into the R itself.
+Typical computers have 1-8 cores, computational servers can have up-to
+64 cores. Speed-up with this approach is therefore limited, but messing
+with OpenCL is not required.
+
+You need to put all your code in the function and then invoke it within
+the mclapply function - a parallelized version of lapply. Its mc.cores
+option specifies how many cores you want to use. There are other functions
+in this package: mcmapply and mcmap providing similar functionality.
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true,language=R]
+library(parallel)
+k<-1:100000                      # create a list of inputs  
+par2x<-function(x)   
+	return(2*x)                  # define function
+mclapply(k, par2x, mc.cores=4)   # run multiple copies of function
+\end{lstlisting}
+
+
+It is easy to get the number of cores available:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},language=R]
+detectCores() [1] 4
+\end{lstlisting}
+
+
+
+\section*{OpenCL Installation on R}
+
+I recommend using a 64-bit distribution of R, along with the RStudio,
+since it is a great IDE and saves time overall. On Linux, Windows
+you need to install OpenCL driver for the GPU you are using. Sometimes
+things get dirty and in the appendix I have described an example of
+a more complex scenario. On mac, the system OpenCL libraries are already
+installed and the only thing left is to install OpenCL package for
+R by Simon Urbanek.
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true,language=R]
+>install.packages("OpenCL")
+Installing package into '/Users/marekkudla/Library/R/3.1/library' (as 'lib' is unspecified)
+
+package 'OpenCL' is available as a source package but not as a binary
+
+Warning in install.packages :   package 'OpenCL' is not available (for R version 3.1.1) 
+\end{lstlisting}
+
+
+Ooops, there is no binary form available, but we can compile our own:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},language=R]
+> install.packages("OpenCL", type="source")
+\end{lstlisting}
+
+
+then let\textquoteright{}s load the library:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},language=R]
+> library(OpenCL)
+\end{lstlisting}
+
+
+and check if it works:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily}]
+> p=oclPlatforms()
+> p
+[[1]] OpenCL platform 'Apple'
+> d=oclDevices(p[[1]]) 
+> d
+[[1]] OpenCL device 'Iris Pro' 
+\end{lstlisting}
+
+
+Ok, this is cool, because the Iris Pro in this case is 5200 of 4th
+gen Core processor, a modest GPU that should give about 700 GFLOPS/s.
+Currently the top of the line GPUs can give 8000 GFLOPS/s, while processors
+give approximately 100 GFLOPS/s, but only if accessed through OpenCL
+(usually less).
+
+
+\section*{Simple Kernel and Program Skeleton}
+
+Rememeber that, even though you are in R environment, you still need
+to program in OpenCL. You need to be familiar with C, but that is
+similar enough to R to learn quickly. The language is basically limited
+C99 with additional built-in math functions. You can use it to process
+various integers, floating points and even char (bitfield) types.
+The Simonek's OpenCL implementation has some limitations though: most
+important is that it is limited to floating point numbers, so strings
+are out of question. The other one is that while you can use multiple
+inputs, only one output. Those limitations could be worked around,
+but would require major effort, so perhaps it is better to move the
+tasks that would require it to C/C++ host programs. In this way, the
+R/OpenCL remains a platform for fast prototyping for floating point
+numbers. Let's create a simple example of calculations in OpenCL on
+R. And let's be a bit more ambitious and create a good starting point
+for further modifications. The example program takes two tables of
+floats as input (same size), two single float variables and outputs
+a table of floats.
+
+\begin{lstlisting}[basicstyle={\footnotesize\ttfamily},breaklines=true]
+library(OpenCL) 
+p=oclPlatforms() 
+d=oclDevices(p[[1]])
+# the library is loaded 
+# we create platform p
+# and device d
+
+#
+# OpenCL kernel
+#
+code1 = c("
+__kernel void kern1(
+	__global float* output,
+	const unsigned int count,
+	__global float* input1,
+	__global float* input2,
+	const float alpha,
+	const float beta
+)
+	{
+			/* only C-style comments here */
+			// or C++ style comments
+
+		int i = get_global_id(0);	
+            // this is the id for your datum
+		output[i] = (input1[i] + input2[i]) * alpha + beta;
+            // simple calculation
+	};
+")
+#
+# end of the kernel code
+#
+
+# compiling kernel for specific platform and device
+examplekernel1 <- oclSimpleKernel(d[[1]], "kern1", code1, "single")
+
+# embedding kernel in the function
+oclf <- function(x, y, alpha = 1.0, beta=0.00 ...) {
+	oclRun(examplekernel1, length(x), x, y, alpha, beta, ...)
+}
+# use oclf as a function on x and y
+x<-clFloat(rnorm(1000000, mean=0, sd=1)) # normal distribution
+y<-clFloat(rexp(1000000,rate = 0.5)) # exponential distribution
+z<-oclf(x,y)
+
+# see the results
+hist(as.numeric(x), breaks=60)
+hist(as.numeric(y), breaks=60)
+hist(z, breaks=60)
+\end{lstlisting}
+
+
+Errors and error checking for inputs is best done outside the OpenCL.
+The error messages from kernels are cryptic, so it is best to keep
+it simple and have tests to verify its correctness.
+
+
+\section*{Timing Execution}
+
+Timing execution of the program is simple using R built-in function
+system.time(). Just use your function and embed it into the timing
+function. Do not use timing over the graphing part of your program,
+since then you will measure the delay in the R's graphics pipelinewhich
+is usually huge. 
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},language=R]
+system.time(g(x))
+\end{lstlisting}
+
+
+
+\section*{Mandelbrot Fractal}
+
+Let's do something fun. Here is the OpenCL code for creating a Mandelbrot
+fractal.
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true]
+#############################
+## Mandelbrot OpenCL Code 
+##############################
+
+## setup OpenCL 
+library(OpenCL) 
+p=oclPlatforms() 
+d=oclDevices(p[[1]])
+
+## kernel code (calculate mandelbrot) 
+code2 = c(" 
+__kernel void calc1( 
+__global float* output, 
+const unsigned int count, 
+__global float* inputx, 
+__global float* inputy) 
+{ 
+	int i = get_global_id(0); 
+	if(i < count){ 
+		__private float tempx; 
+		__private float tempy; 
+		__private float temp; 
+		tempx = inputx[i]; 
+		tempy = inputy[i]; 
+		temp = tempx; 
+		for(__private int iter=1; iter<=100; iter++) 
+		{ 
+			temp = tempx; 
+			tempx = tempx * tempx - tempy * tempy + inputx[i]; 
+			tempy = 2 * temp * tempy + inputy[i]; 
+		} 
+		output[i] = tempx*tempx+tempy*tempy; 
+	} 
+};")
+
+
+## compile kernel and embeed it into function 
+k.calc2 <- oclSimpleKernel(d[[1]], "calc1", code2, "single") 
+f <- function(x, y, ...) 
+	oclRun(k.calc2, length(x), x, y)
+
+## setup environment
+size=4000 
+iterations=100 
+matxR<-matrix(rep(seq(-2,2,length.out=size),size),size) 
+matyR<-t(matxR)
+## use function 
+image(matrix(f(matxR,matyR),size),zlim=c(-4,4))
+## benchmark function 
+system.time(f(matxR,matyR))
+\end{lstlisting}
+
+
+If you want to compare execution time, you can run the conventional
+version of the program.
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true,language=R]
+############################# 
+## Mandelbrot Conventional Code 
+##############################
+## setup environment 
+size=4000 
+iterations=10 
+matxR<-matrix(rep(seq(-2.5,1.5,length.out=size),size),size) 
+matyR<-t(matxR)
+g <-function(matxR, matyR) 
+{ 
+	iterx<-matxR 
+	itery<-matyR 
+	for(i in 1:iterations)  {   
+temp<-iterx   
+iterx<-iterx*iterx-itery*itery+matxR   
+itery<-2*temp*itery+matyR   
+} 
+return(iterx*iterx+itery*itery) 
+}
+## use function 
+image(matrix(g(matxR,matyR),size),zlim=c(-4,4))
+## benchmark function 
+system.time(g(matxR,matyR))
+\end{lstlisting}
+
+
+The difference in execution time is very noticable, being 178x of
+the OpenCl version.
+
+\rule[0.5ex]{0.9\textwidth}{0.5pt}
+
+
+\section*{Appendix}
+
+Installation of the Simon Urbanek's OpenCL package in R on 64-bit
+linux and AMD GPU. Installation of graphics driver is complicated,
+but at least documented and I was able to go through it after few
+attempts. The further problem was that Simon's package assumes links
+to the libraries are on pathway typical for 32 bit systems and they
+look differently on 64 bit ones. Here is how the error looked like:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true,language=R]
+> install.packages("OpenCL") 
+Installing package(s) into '/home/user1/R/x86_64-pc-linux-gnu-library/2.14' (as 'lib' is unspecified)
+trying URL 'http://watson.nci.nih.gov/cran_mirror/src/contrib/OpenCL_0.1-3.tar.gz' 
+Content type 'application/octet-stream' length 15524 bytes (15 Kb) 
+opened URL 
+================================================== 
+downloaded 15 Kb
+* installing *source* package 'OpenCL' ... 
+** package 'OpenCL' successfully unpacked and MD5 sums checked 
+** libs gcc -std=gnu99 -I/usr/share/R/include      -fpic  -O3 -pipe  -g -c ocl.c -o ocl.o 
+ocl.c:6:23: fatal error: CL/opencl.h: No such file or directory 
+compilation terminated. 
+make: *** [ocl.o] Error 1 
+ERROR: compilation failed for package 'OpenCL'
+* removing '/home/user1/R/x86_64-pc-linux-gnu-library/2.14/OpenCL' 
+Warning in install.packages :   installation of package 'OpenCL' had non-zero exit status
+The downloaded packages are in 	
+'/tmp/RtmprdyHgJ/downloaded_packages' 
+\end{lstlisting}
+
+
+and here is the fix:
+
+\begin{lstlisting}[basicstyle={\small\ttfamily},breaklines=true]
+cd /usr/share/R/include 
+sudo ln -s /opt/AMDAPP/include/CL ./CL 
+cd /usr/lib/R/lib 
+sudo ln -s /opt/AMDAPP/lib/x86_64/libOpenCL.so ./libOpenCL.so
+\end{lstlisting}
+
+
+after that it installed normaly and I was able to use it.
+\end{document}

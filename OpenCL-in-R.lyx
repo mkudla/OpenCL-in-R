@@ -1,0 +1,857 @@
+#LyX 2.1 created this file. For more info see http://www.lyx.org/
+\lyxformat 474
+\begin_document
+\begin_header
+\textclass article
+\use_default_options true
+\maintain_unincluded_children false
+\language english
+\language_package default
+\inputencoding auto
+\fontencoding global
+\font_roman default
+\font_sans default
+\font_typewriter default
+\font_math auto
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_osf false
+\font_sf_scale 100
+\font_tt_scale 100
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\paperfontsize default
+\use_hyperref false
+\papersize default
+\use_geometry false
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 1
+\use_package esint 1
+\use_package mathdots 1
+\use_package mathtools 1
+\use_package mhchem 1
+\use_package stackrel 1
+\use_package stmaryrd 1
+\use_package undertilde 1
+\cite_engine basic
+\cite_engine_type default
+\biblio_style plain
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification true
+\use_refstyle 1
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\quotes_language english
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tracking_changes false
+\output_changes false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\end_header
+
+\begin_body
+
+\begin_layout Title
+OpenCl in R by example
+\end_layout
+
+\begin_layout Author
+Marek Kudla
+\end_layout
+
+\begin_layout Date
+10/28/15
+\end_layout
+
+\begin_layout Section*
+INTRODUCTION
+\end_layout
+
+\begin_layout Standard
+For laymen: OpenCL is a High-Throughput Computing language that enables
+ of use of computation accelerators, like GPU or specialized cards to speed-up
+ the computations.
+ R is a statistical programming language that provides many built-in and
+ verified statistical functions and plotting capabilities, yet until recently
+ was single-threaded, so ill-suited to running computer-intensive simulations.
+ With the advent of powerful GPUs and OpenCL it is now possible to bring
+ them from supercomputers or multi-node clusters to single workstations.
+\end_layout
+
+\begin_layout Standard
+Setting the OpenCL in R has many advantages.
+ You can use computing power of OpenCL for number crunching, while still
+ process input and output with high-level R facilities.
+ Typical example would be generating random numbers in R using its distribution
+ functions, processing them with OpenCL, then use R to plot the results.
+ This set-up makes it possible for you to skip solving non-essential problems
+ in C or C++ and focus on just writing the number-crunching code.
+\end_layout
+
+\begin_layout Section*
+INSTALLATION
+\end_layout
+
+\begin_layout Standard
+I recommend using a 64-bit distribution of R, along with the RStudio, since
+ it is a great IDE and saves time compared to original command line interface.
+ On linux, you need to install OpenCL driver for the GPU you are using.
+ Sometimes it is pretty complex and in the appendix I described more complex
+ scenario.
+ On mac, the system OpenCL libraries are already installed and the only
+ thing left is to install OpenCL package for R by Simon Urbanek.
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+>install.packages("OpenCL")
+\end_layout
+
+\begin_layout Plain Layout
+
+Installing package into ‘/Users/marekkudla/Library/R/3.1/library’ (as ‘lib’
+ is unspecified)
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+package ‘OpenCL’ is available as a source package but not as a binary
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+Warning in install.packages :   package ‘OpenCL’ is not available (for R
+ version 3.1.1) 
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Ooops, there is no binary form available, but we can compile our own:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> install.packages("OpenCL", type="source")
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+then let’s load the library:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> library(OpenCL)
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+and check if it works:
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+> p=oclPlatforms()
+\end_layout
+
+\begin_layout Plain Layout
+
+> p
+\end_layout
+
+\begin_layout Plain Layout
+
+[[1]] OpenCL platform 'Apple'
+\end_layout
+
+\begin_layout Plain Layout
+
+> d=oclDevices(p[[1]]) 
+\end_layout
+
+\begin_layout Plain Layout
+
+> d
+\end_layout
+
+\begin_layout Plain Layout
+
+[[1]] OpenCL device 'Iris Pro' 
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Ok, this is cool, because the Iris Pro in this case is 5200 of 4th gen Core
+ processor, a modest GPU that should give about 700 GFLOPS/s.
+ Currently the top of the line gives 8000 GFLOPS/s and processors give barely
+ 100 GFLOPS/s.
+\end_layout
+
+\begin_layout Section*
+Simple kernel
+\end_layout
+
+\begin_layout Standard
+Rememeber that, even though you are in R environment, you still need to
+ program in OpenCL.
+ You need to be familiar with C, but that is similar enough to R to learn
+ quickly.
+ The language is basically limited C99 with additional built-in math functions.
+ You can use it to process various integers, floating points and even char
+ (bitfield) types.
+ The Simonek's OpenCL implementation has some limitations though: most important
+ is that it is limited to floating point numbers, so strings are out of
+ question.
+ The other one is that while you can use multiple inputs, only one output.
+ Those limitations could be worked around, but would require major effort,
+ so perhaps it is better to move the tasks that would require it to C/C++
+ host programs.
+ In this way, the R/OpenCL remains a platform for fast prototyping for floating
+ point numbers.
+ Let's create a simple example of calculations in OpenCL on R.
+ And let's be a bit more ambitious than doing 2+2.
+\end_layout
+
+\begin_layout Section*
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+x<-rnorm(1000000, mean=0, sd=1)
+\end_layout
+
+\begin_layout Plain Layout
+
+hist(x, breaks=60)
+\end_layout
+
+\end_inset
+
+Timing Execution
+\end_layout
+
+\begin_layout Section*
+Mandelbrot Fractal
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+#############################
+\end_layout
+
+\begin_layout Plain Layout
+
+## Mandelbrot OpenCL Code 
+\end_layout
+
+\begin_layout Plain Layout
+
+##############################
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+## setup OpenCL 
+\end_layout
+
+\begin_layout Plain Layout
+
+library(OpenCL) 
+\end_layout
+
+\begin_layout Plain Layout
+
+p=oclPlatforms() 
+\end_layout
+
+\begin_layout Plain Layout
+
+d=oclDevices(p[[1]])
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+## kernel code (calculate mandelbrot) 
+\end_layout
+
+\begin_layout Plain Layout
+
+code2 = c(" 
+\end_layout
+
+\begin_layout Plain Layout
+
+__kernel void calc1( 
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* output, 
+\end_layout
+
+\begin_layout Plain Layout
+
+const unsigned int count, 
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* inputx, 
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* inputy) 
+\end_layout
+
+\begin_layout Plain Layout
+
+{ 
+\end_layout
+
+\begin_layout Plain Layout
+
+	int i = get_global_id(0); 
+\end_layout
+
+\begin_layout Plain Layout
+
+	if(i < count){ 
+\end_layout
+
+\begin_layout Plain Layout
+
+		__private float tempx; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		__private float tempy; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		__private float temp; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		tempx = inputx[i]; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		tempy = inputy[i]; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		temp = tempx; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		for(__private int iter=1; iter<=100; iter++) 
+\end_layout
+
+\begin_layout Plain Layout
+
+		{ 
+\end_layout
+
+\begin_layout Plain Layout
+
+			temp = tempx; 
+\end_layout
+
+\begin_layout Plain Layout
+
+			tempx = tempx * tempx - tempy * tempy + inputx[i]; 
+\end_layout
+
+\begin_layout Plain Layout
+
+			tempy = 2 * temp * tempy + inputy[i]; 
+\end_layout
+
+\begin_layout Plain Layout
+
+		} 
+\end_layout
+
+\begin_layout Plain Layout
+
+		output[i] = tempx*tempx+tempy*tempy; 
+\end_layout
+
+\begin_layout Plain Layout
+
+	} 
+\end_layout
+
+\begin_layout Plain Layout
+
+};")
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+## compile kernel and embeed it into function 
+\end_layout
+
+\begin_layout Plain Layout
+
+k.calc2 <- oclSimpleKernel(d[[1]], "calc1", code2, "single") 
+\end_layout
+
+\begin_layout Plain Layout
+
+f <- function(x, y, ...) 
+\end_layout
+
+\begin_layout Plain Layout
+
+	oclRun(k.calc2, length(x), x, y)
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+## setup environment
+\end_layout
+
+\begin_layout Plain Layout
+
+size=4000 
+\end_layout
+
+\begin_layout Plain Layout
+
+iterations=100 
+\end_layout
+
+\begin_layout Plain Layout
+
+matxR<-matrix(rep(seq(-2,2,length.out=size),size),size) 
+\end_layout
+
+\begin_layout Plain Layout
+
+matyR<-t(matxR)
+\end_layout
+
+\begin_layout Plain Layout
+
+## use function 
+\end_layout
+
+\begin_layout Plain Layout
+
+image(matrix(f(matxR,matyR),size),zlim=c(-4,4))
+\end_layout
+
+\begin_layout Plain Layout
+
+## benchmark function 
+\end_layout
+
+\begin_layout Plain Layout
+
+system.time(f(matxR,matyR))
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+If you want to compare time, you can run the conventional version of the
+ program.
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+############################# 
+\end_layout
+
+\begin_layout Plain Layout
+
+## Mandelbrot Conventional Code 
+\end_layout
+
+\begin_layout Plain Layout
+
+# #############################
+\end_layout
+
+\begin_layout Plain Layout
+
+## setup environment 
+\end_layout
+
+\begin_layout Plain Layout
+
+size=4000 
+\end_layout
+
+\begin_layout Plain Layout
+
+iterations=10 
+\end_layout
+
+\begin_layout Plain Layout
+
+matxR<-matrix(rep(seq(-2.5,1.5,length.out=size),size),size) 
+\end_layout
+
+\begin_layout Plain Layout
+
+matyR<-t(matxR)
+\end_layout
+
+\begin_layout Plain Layout
+
+g <-function(matxR, matyR) 
+\end_layout
+
+\begin_layout Plain Layout
+
+{ 
+\end_layout
+
+\begin_layout Plain Layout
+
+	iterx<-matxR 
+\end_layout
+
+\begin_layout Plain Layout
+
+	itery<-matyR 
+\end_layout
+
+\begin_layout Plain Layout
+
+	for(i in 1:iterations)  {   
+\end_layout
+
+\begin_layout Plain Layout
+
+temp<-iterx   
+\end_layout
+
+\begin_layout Plain Layout
+
+iterx<-iterx*iterx-itery*itery+matxR   
+\end_layout
+
+\begin_layout Plain Layout
+
+itery<-2*temp*itery+matyR   
+\end_layout
+
+\begin_layout Plain Layout
+
+} 
+\end_layout
+
+\begin_layout Plain Layout
+
+return(iterx*iterx+itery*itery) 
+\end_layout
+
+\begin_layout Plain Layout
+
+}
+\end_layout
+
+\begin_layout Plain Layout
+
+## use function 
+\end_layout
+
+\begin_layout Plain Layout
+
+image(matrix(g(matxR,matyR),size),zlim=c(-4,4))
+\end_layout
+
+\begin_layout Plain Layout
+
+## benchmark function 
+\end_layout
+
+\begin_layout Plain Layout
+
+system.time(g(matxR,matyR))
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section*
+Simplest Multicore 
+\end_layout
+
+\begin_layout Section*
+Skeleton Program
+\end_layout
+
+\begin_layout Standard
+Here is a useful example that you can use as a starting point for your program.
+ After the tutorial the comments should be redundant for you, but better
+ to keep them in place for others.
+ It takes two inputs - tables of floats, the constant and outputs one tablet
+ of float.
+ Remember that in OpenCL package you can only get a single output object.
+\end_layout
+
+\begin_layout Standard
+\begin_inset listings
+inline false
+status open
+
+\begin_layout Plain Layout
+
+library(OpenCL)
+\end_layout
+
+\begin_layout Plain Layout
+
+p = oclPlatforms()
+\end_layout
+
+\begin_layout Plain Layout
+
+d = oclDevices(p[[1]])
+\end_layout
+
+\begin_layout Plain Layout
+
+# the library is loaded and we got first device to serve as execution unit
+\end_layout
+
+\begin_layout Plain Layout
+
+# when first time using the platform, check d that it has a valid device
+ 
+\end_layout
+
+\begin_layout Plain Layout
+
+# and select the fastest one, eg.
+ use d[[2]] below if it is faster
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+# now, let's put the code of the OpenCL kernel in this string
+\end_layout
+
+\begin_layout Plain Layout
+
+code = c("__kernel void examplekernel1(
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* output,
+\end_layout
+
+\begin_layout Plain Layout
+
+const unsigned int count,
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* input1,
+\end_layout
+
+\begin_layout Plain Layout
+
+__global float* input2,
+\end_layout
+
+\begin_layout Plain Layout
+
+const float alpha)
+\end_layout
+
+\begin_layout Plain Layout
+
+{
+\end_layout
+
+\begin_layout Plain Layout
+
+	/* only C or C++ comments here */
+\end_layout
+
+\begin_layout Plain Layout
+
+int i = get_global_id(0); // this is the id for your datum
+\end_layout
+
+\begin_layout Plain Layout
+
+output[i] = i + alpha; // simple addition as an example
+\end_layout
+
+\begin_layout Plain Layout
+
+};")
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+# let's compile the kernel, it takes the device, name of the kernel, 
+\end_layout
+
+\begin_layout Plain Layout
+
+# name of the text object and codeword declaring precision
+\end_layout
+
+\begin_layout Plain Layout
+
+examplekernel1 <- oclSimpleKernel(d[[1]], "examplekernel1", code, "single")
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\begin_layout Plain Layout
+
+# embedding kernel in the function
+\end_layout
+
+\begin_layout Plain Layout
+
+oclf <- function(x, alpha = 2.7, ...) {
+\end_layout
+
+\begin_layout Plain Layout
+
+	oclRun(examplekernel1, length(x), x, alpha, ...)
+\end_layout
+
+\begin_layout Plain Layout
+
+}
+\end_layout
+
+\begin_layout Plain Layout
+
+# now everything is ready to use oclf as a function operating
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_body
+\end_document
